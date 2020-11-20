@@ -78,7 +78,7 @@ def doMCMC(data, guess, scale, nwalkers=100, nburn=1500, nsteps=3000):
     starting_guesses = np.random.randn(nwalkers, ndim)*scale + guess
 
     print('sampling...')
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, threads=1, args=[data])
+    sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, threads=5, args=[data])
     sampler.run_mcmc(starting_guesses, nsteps)
     print('done')
     
