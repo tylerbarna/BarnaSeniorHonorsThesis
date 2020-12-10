@@ -11,47 +11,61 @@ def get_fullparam(theta):
     # 2nd parameter is sigma 
     # 3rd parameter is power, this is left out for now
 
-    assert (nparam >= 3) and (nparam <= 5), "invalid nparam"
+    assert (nparam >= 2) and (nparam <= 5), "invalid nparam"
 
     if nparam == 2:
         t0, a = theta
         sigma = 0.
-        # power = 2.
+        power = 2.
+        offset = 0.
     elif nparam == 3:
         t0, a, sigma = theta
-        # power = 2.
-    # elif nparam == 4:
-    #     t0, a, sigma, power = theta
+        power = 2.
+        offset = 0.
+    elif nparam == 4:
+        t0, a, sigma, power = theta
+        offset = 0.
+    elif nparam == 5:
+        t0, a, sigma, power, offset = theta
 
-    return t0, a, sigma#, power
+    return t0, a, sigma, power, offset
 
 def log_prior(theta):
     
     nparam = len(theta)
-    t0, a, sigma = get_fullparam(theta)
+    t0, a, sigma, power, offset = get_fullparam(theta)
     
     logpr = 0.
 
     if nparam <= 2:
-        return logpr
+        return 0.
 
     if sigma <= 0:
+        return -np.inf
+
+    if (power < 1.0) or (power > 3.0):
+        return -np.inf
+
+    if np.abs(t0) > 10:
         return -np.inf
       
     # Can play around with different priors if you want to    
     # if nparam >= 4:
     #     logpr -= np.log(sigma)
 
-    return logpr
+    return 0.
 
 def log_likelihood(theta, data):
     
-    t0, a, sigma = get_fullparam(theta)
+    t0, a, sigma, power, offset = get_fullparam(theta)
 
-    power = 2.0
+    # power = 2.0
     
     var = (data['flux_err']**2 + sigma**2)
-    model = np.heaviside(data['mjd'] - t0, 0) * a * (data['mjd'] - t0)**power
+    # model = np.heaviside(data['mjd'] - t0, 0) * a * (data['mjd'] - t0)**power
+    model = np.zeros(len(data))
+    model[data['mjd']-t0 > 0] = a * (data['mjd'][data['mjd']-t0 > 0] - t0)**power
+    model+=offset
     logl = -0.5 * (np.sum(np.log(2 * np.pi * var) + 
                             ((data['flux'] - model)**2 / var) ))
         
@@ -79,14 +93,15 @@ def doMCMC(data, guess, scale, nwalkers=100, nburn=1500, nsteps=3000):
 
     print('sampling...')
     sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, threads=1, args=[data])
-    sampler.run_mcmc(starting_guesses, nsteps)
+    sampler.run_mcmc(starting_guesses, nsteps, progress=True)
     print('done')
     
     
     tlabels = [r"t0", 
            r"a",
            r"sigma",
-           # r"power"
+           r"power",
+           r"offset",
            ]
     samples = sampler.chain[:, nburn:, :].reshape((-1, ndim))
     sampler.reset()
