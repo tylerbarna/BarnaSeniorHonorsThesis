@@ -69,16 +69,18 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
                           ((thetaDict['a']*((t - thetaDict['t0'])/
                                             (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
-                          for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data)
+                          for t in data['mjd_0']]) + np.abs(gaussian(theta,thetaKeys,data)) ##weird behavior without the absolute value
     else:
         raise KeyError('Must Provide Valid Model')
     return model, var
 
-def gaussian(theta, thetaKeys,data):
+def gaussian(theta, thetaKeys,data): 
     thetaDict = get_fullparam(theta,thetaKeys)
     curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
     curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
     curve = thetaDict['gFactor']*curveFrac * np.exp(curveExp)
+    ##taking log means the gaussian will never be inverted
+    ## currently not working as I thought, might be misunderstanding
     return curve 
 
 def log_prior(theta, thetaKeys):
@@ -91,11 +93,11 @@ def log_prior(theta, thetaKeys):
     if thetaDict['sigma'] < 0:
         return -np.inf
 
-    if thetaDict['t0'] < 0:
+    if thetaDict['t0'] < 3:
         return -np.inf
     
-    if thetaDict['t0'] > 10:
-        return -(100)**np.float(thetaDict['t0'])
+    if thetaDict['t0'] > 7:
+        return -(10)**np.float(thetaDict['t0'])
     
     if thetaDict['a'] <= 0:
         return -np.inf
@@ -106,22 +108,29 @@ def log_prior(theta, thetaKeys):
     if thetaDict['y0'] < -0.5:
         return -np.inf
     
-    if thetaDict['mean'] <= thetaDict['t0']:
+    if (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
         return -np.inf
     
-    if thetaDict['mean'] > thetaDict['t0']+7:
+    elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
+        return -np.inf ##maybe make this a gaussian prior as well
+    
+    if thetaDict['std'] <= 0.5:
         return -np.inf
     
-    if thetaDict['mean'] > 12:
-        return -np.inf
+    elif thetaDict['std'] > 2:
+        widthSTD = 5 * thetaDict['std']# / (2* np.sqrt(2*np.log(2))) ## not sure about this
+        widthMean = 1.5 #value with least penalty
+        dummyData = pd.DataFrame()
+        dummyData['mjd_0'] = np.array([thetaDict['std']])
+        scaleNum = 1e7 #used as the scale factor as well as the penalty
+        widthDict = {'mean':widthMean,'std':widthSTD,'gFactor':scaleNum}
+        gaussVal = gaussian(widthDict.values(), widthDict.keys(),dummyData)[0]
+        gaussPrior = gaussVal - scaleNum/(widthSTD * np.sqrt(2*np.pi)) +1 ##I have to reduce how much emcee zeroes in on widthMean
+        ## Ideally, I should pull this out and make a generalized gaussian prior function
+        ## for use in other priors 
+        return gaussPrior
     
-    if thetaDict['std'] <= 0:
-        return -np.inf
-    
-#     if thetaDict['std'] > 5:
-#         return -np.inf
-    
-    if thetaDict['gFactor'] <= 0:
+    if thetaDict['gFactor'] <= 0: ##unnecessary if using the np.log
         return -np.inf
     
     if thetaDict['gFactor'] > 1:
@@ -232,7 +241,7 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     if len(indices) > 1:
         for i in indices:
             model, var = lc_model(fits[i],guess.keys(),dummyPD,curveModel)
-            alfPogForm = 0.25 - 0.25*(numModels/(numModels+250))
+            alfPogForm = 0.1 - 0.1*(numModels/(numModels+250))
             ## above could be bad in the case of a large sample with few models selected
             ax.plot(tRange,model, alpha=alfPogForm, linewidth=3, color=plotPal[1])
             ## line width not necessarily representative of actual width of 
