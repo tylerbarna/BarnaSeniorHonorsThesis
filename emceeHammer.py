@@ -18,13 +18,13 @@ tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
 
 def get_fullparam(theta, thetaKeys):
     params = {'t0':7, 
-              'a':0.0025,
-              'sigma':0,
-              'power':1.4,
+              'a':1,
+              'sigma':0.0,
+              'power':1.8,
               'y0':0,
               'mean':10.65,
-              'std':0.05,
-              'gFactor':0.001}
+              'std':1,
+              'gFactor':0.0}
     params.update(dict(zip(thetaKeys,theta)))
     return params
 
@@ -32,7 +32,7 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
     thetaDict = get_fullparam(theta,thetaKeys)
     
     if curveModel =='standard':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2) ##normalize the flux and fix
+        var = (data['e_flux']**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
                  thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power'] 
                  for t in data['mjd_0']])
@@ -50,7 +50,7 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
                  for t in data['mjd_0']])
         
     elif curveModel =='gaussian':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2 + thetaDict['std'])
+        var = (data['e_flux']**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
                  (thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power'])
                  for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data)
@@ -58,18 +58,18 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
     elif curveModel =='decoupled':
         var = (data['e_flux']**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
-                 ((thetaDict['a']*((t - thetaDict['t0'])/
-                                   (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
-                  +thetaDict['y0'])
+                          ((thetaDict['a']*((t - thetaDict['t0'])/
+                                            (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
+                           +thetaDict['y0'])
                           for t in data['mjd_0']])
         
     elif curveModel =='dcGauss':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2 + thetaDict['std'])
+        var = (data['e_flux']**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
                                             (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
-                          for t in data['mjd_0']]) + np.abs(gaussian(theta,thetaKeys,data)) ##weird behavior without the absolute value
+                          for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data) 
     else:
         raise KeyError('Must Provide Valid Model')
     return model, var
@@ -96,10 +96,21 @@ def log_prior(theta, thetaKeys):
     if thetaDict['t0'] < 3:
         return -np.inf
     
-    if thetaDict['t0'] > 7:
-        return -(10)**np.float(thetaDict['t0'])
+#     elif thetaDict['t0'] > 7: ##should converge without this
+#         STD = 1/ (2* np.sqrt(2*np.log(2))) ## not sure about this
+#         arbitraryTestScale = 1e0
+#         Mean = 5
+#         ## Ideally, I should pull this out and make a generalized gaussian prior function
+#         ## for use in other priors 
+#         logpr += -arbitraryTestScale * 0.5 * (np.log(2 * np.pi * STD) + 
+#                             ((Mean - thetaDict['std'])**2 / STD) )
+    if thetaDict['t0'] > 16:
+        return -np.inf
     
     if thetaDict['a'] <= 0:
+        return -np.inf
+    
+    elif thetaDict['a'] > 10:
         return -np.inf
     
     if thetaDict['y0'] > .5:
@@ -108,32 +119,38 @@ def log_prior(theta, thetaKeys):
     if thetaDict['y0'] < -0.5:
         return -np.inf
     
-    if (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
+#     if (thetaDict['mean']-2*thetaDict['std']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
+#         return -np.inf
+
+    elif thetaDict['mean'] < 3:
         return -np.inf
     
-    elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
-        return -np.inf ##maybe make this a gaussian prior as well
-    
-    if thetaDict['std'] <= 0.5:
+    elif thetaDict['mean'] > 16:
         return -np.inf
     
-    elif thetaDict['std'] > 2:
-        widthSTD = 5 * thetaDict['std']# / (2* np.sqrt(2*np.log(2))) ## not sure about this
-        widthMean = 1.5 #value with least penalty
-        dummyData = pd.DataFrame()
-        dummyData['mjd_0'] = np.array([thetaDict['std']])
-        scaleNum = 1e7 #used as the scale factor as well as the penalty
-        widthDict = {'mean':widthMean,'std':widthSTD,'gFactor':scaleNum}
-        gaussVal = gaussian(widthDict.values(), widthDict.keys(),dummyData)[0]
-        gaussPrior = gaussVal - scaleNum/(widthSTD * np.sqrt(2*np.pi)) +1 ##I have to reduce how much emcee zeroes in on widthMean
+#     elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
+#         return -np.inf ##maybe make this a gaussian prior as well
+    
+    if thetaDict['std'] < 0:
+        return -np.inf
+    
+    elif thetaDict['std'] > 14:
+        return -np.inf
+    
+    else:
+        widthSTD = 1#
+        widthMean = 6 ##pick good parameters later
         ## Ideally, I should pull this out and make a generalized gaussian prior function
         ## for use in other priors 
-        return gaussPrior
+        #arbitraryTestScale * 0.5 * (np.log(2 * np.pi * widthSTD) ## unneeded
+        logpr += -0.5*((widthMean - thetaDict['std']) / widthSTD)**2
+        
+
     
-    if thetaDict['gFactor'] <= 0: ##unnecessary if using the np.log
+    if thetaDict['gFactor'] < 0: ##unnecessary if using the np.log
         return -np.inf
     
-    if thetaDict['gFactor'] > 1:
+    if thetaDict['gFactor'] > .01:
         return -np.inf
     
     if thetaDict['power'] <= 1:
@@ -144,7 +161,7 @@ def log_prior(theta, thetaKeys):
     return logpr
 
 def log_likelihood(theta, thetaKeys, data, curveModel='standard'):
-    
+    #return 0
     thetaDict = get_fullparam(theta, thetaKeys)
     #print(thetaDict)
     model,var = lc_model(thetaDict.values(),thetaDict.keys(),data, curveModel)
@@ -154,18 +171,19 @@ def log_likelihood(theta, thetaKeys, data, curveModel='standard'):
     return logl
 
     
-def log_posterior(theta, thetaKeys, data, curveModel='standard'):
+def log_posterior(theta, thetaKeys, data, curveModel='standard',debug=False):
     
     logpr = log_prior(theta, thetaKeys)
     
-    if logpr == -np.inf:
+    if logpr == -np.inf or debug:
         return logpr
     else:
         return logpr + log_likelihood(theta, thetaKeys, data, curveModel)
 
 def doMCMC(data, guess, scale, 
            nwalkers=100, nburn=1500, nsteps=3000, 
-           curveModel='standard',savePlots=True):
+           curveModel='standard',debug=False,
+           savePlots=True):
     '''
     Takes data which contains mjd and flux data
     and performs an mcmc fit on it
@@ -179,7 +197,7 @@ def doMCMC(data, guess, scale,
 #     print(starting_guesses)
     print('sampling...')
     sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, threads=-1, 
-                                    args=[list(guess.keys()),data,curveModel])
+                                    args=[list(guess.keys()),data,curveModel,debug])
     sampler.run_mcmc(starting_guesses, nsteps,progress="notebook")
     print('done')
     
@@ -197,11 +215,14 @@ def doMCMC(data, guess, scale,
 def hammerTime(data, guess, scale, cutoff=16.75, 
                     nwalkers=100, nburn=1500, nsteps=3000,
                     curveModel='standard',numModels=None,
-                   MC=True, plotPal=('#003C86','#7CFFFA','#008169'),savePlots=False):
+                   MC=True, debug=False,
+               plotPal=('#003C86','#7CFFFA','#008169'),savePlots=False):
     ## pretty sloppy implementation, could make this a part of the function directly
     ## assert nwalkers must be twice number of parameters and fix if not
     
     ##Fix this causing dependency on data being included in file 
+    if debug:
+        print('Debug Mode is active; log_likelihood will always return 0')
     if data.mjd_0[0] <=3:##== tess_2020bpi.mjd_0[0] or data.mjd_0[0] == tess_2020bpi_a.mjd_0[0]:
         title = 'TESS'
     elif data.mjd_0[0] > 3 and data.mjd_0[0] < 10: ##== ztf_2020bpi.mjd_0[0]:
@@ -212,7 +233,7 @@ def hammerTime(data, guess, scale, cutoff=16.75,
         RootDirString = np.str('./plots/'+title+'/')
         mkdir(dirString)
     if MC:    
-        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, nwalkers, nburn, nsteps,curveModel,savePlots)
+        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, nwalkers, nburn, nsteps,curveModel,debug,savePlots)
     elif not MC:
         fits = np.array([list(guess.values())])
 
@@ -235,7 +256,7 @@ def hammerTime(data, guess, scale, cutoff=16.75,
         ## at all in the case of there only being one guess and no mcmc call
         ## current implementation doesn't guarantee all fits will be plotted
         ## probably unecessary, just plot like 1% of all models or so
-        numModels = round(0.01*nwalkers*nsteps)
+        numModels = round(0.001*nwalkers*nsteps)
     indices = list(dict.fromkeys([np.random.randint(low=0,high=len(fits[:,0])) ##makes it so you don't overplot any duplicates (mostly for when you're just plotting your guess)
                                   for i in range(0,numModels)]))
     if len(indices) > 1:
