@@ -6,6 +6,7 @@ from multiprocessing import Pool
 ##Need to figure out why this stuff is needed
 tess_2020bpi = pd.read_csv('JhaData/TESS_SN2020bpi.csv')[::2]
 tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
+fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
 # fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
 # tess_2020bpi_norm = tess_2020bpi
 # tess_2020bpi_norm.flux = tess_2020bpi.flux/fluxNorm
@@ -144,16 +145,14 @@ def log_prior(theta, thetaKeys):
         ## for use in other priors 
         #arbitraryTestScale * 0.5 * (np.log(2 * np.pi * widthSTD) ## unneeded
         logpr += -0.5*((widthMean - thetaDict['std']) / widthSTD)**2
-        
-
     
-    if thetaDict['gFactor'] < 0: ##unnecessary if using the np.log
+    if thetaDict['gFactor'] < 0: 
         return -np.inf
     
-    if thetaDict['gFactor'] > .01:
+    if thetaDict['gFactor'] > 0.2: ##partially justified by Kasen Paper(?)
         return -np.inf
     
-    if thetaDict['power'] <= 1:
+    if thetaDict['power'] <= 0: ##setting to 1 significantly increases run time
         return -np.inf
     
     if thetaDict['power'] >= 2.5:
