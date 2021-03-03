@@ -70,13 +70,14 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
                           ((thetaDict['a']*((t - thetaDict['t0'])/
                                             (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
-                          for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data) 
+                          for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data)
+    
     else:
         raise KeyError('Must Provide Valid Model')
     return model, var
 
 def gaussian(theta, thetaKeys,data): 
-    thetaDict = get_fullparam(theta,thetaKeys)
+    thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta,thetaKeys)
     curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
     curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
     curve = thetaDict['gFactor']*curveFrac * np.exp(curveExp)
@@ -87,14 +88,14 @@ def gaussian(theta, thetaKeys,data):
 def log_prior(theta, thetaKeys):
     
     nparam = len(theta)
-    thetaDict = get_fullparam(theta, thetaKeys)
+    thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta, thetaKeys)
     
     logpr = 0.
 
     if thetaDict['sigma'] < 0:
         return -np.inf
 
-    if thetaDict['t0'] < 3:
+    if thetaDict['t0'] < 0:
         return -np.inf
     
 #     elif thetaDict['t0'] > 7: ##should converge without this
@@ -113,21 +114,21 @@ def log_prior(theta, thetaKeys):
     
     elif thetaDict['a'] > 10:
         return -np.inf
+    ## don't seem to be needed
+#     if thetaDict['y0'] > .5:
+#         return -np.inf
     
-    if thetaDict['y0'] > .5:
-        return -np.inf
-    
-    if thetaDict['y0'] < -0.5:
-        return -np.inf
+#     if thetaDict['y0'] < -0.5:
+#         return -np.inf
     
 #     if (thetaDict['mean']-2*thetaDict['std']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
 #         return -np.inf
 
-    elif thetaDict['mean'] < 3:
+    if thetaDict['mean'] < thetaDict['t0']:
         return -np.inf
     
-    elif thetaDict['mean'] > 16:
-        return -np.inf
+#     elif thetaDict['mean'] > thetaDict['t0']+5:
+#         return -np.inf
     
 #     elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
 #         return -np.inf ##maybe make this a gaussian prior as well
@@ -149,8 +150,8 @@ def log_prior(theta, thetaKeys):
     if thetaDict['gFactor'] < 0: 
         return -np.inf
     
-    if thetaDict['gFactor'] > 0.2: ##partially justified by Kasen Paper(?)
-        return -np.inf
+#     if thetaDict['gFactor'] > fluxNorm: ##partially justified by Kasen Paper(?)
+#         return -np.inf
     
     if thetaDict['power'] <= 0: ##setting to 1 significantly increases run time
         return -np.inf
@@ -161,9 +162,9 @@ def log_prior(theta, thetaKeys):
 
 def log_likelihood(theta, thetaKeys, data, curveModel='standard'):
     #return 0
-    thetaDict = get_fullparam(theta, thetaKeys)
+    #thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta, thetaKeys)
     #print(thetaDict)
-    model,var = lc_model(thetaDict.values(),thetaDict.keys(),data, curveModel)
+    model,var = lc_model(theta,thetaKeys,data, curveModel)
     logl = -0.5 * (np.sum(np.log(2 * np.pi * var) + 
                             ((data.flux - model)**2 / var) ))
         
@@ -171,13 +172,13 @@ def log_likelihood(theta, thetaKeys, data, curveModel='standard'):
 
     
 def log_posterior(theta, thetaKeys, data, curveModel='standard',debug=False):
-    
-    logpr = log_prior(theta, thetaKeys)
+    thetaDict = get_fullparam(theta, thetaKeys)
+    logpr = log_prior(thetaDict.values(), thetaDict.keys())
     
     if logpr == -np.inf or debug:
         return logpr
     else:
-        return logpr + log_likelihood(theta, thetaKeys, data, curveModel)
+        return logpr + log_likelihood(thetaDict.values(), thetaDict.keys(), data, curveModel)
 
 def doMCMC(data, guess, scale, 
            nwalkers=100, nburn=1500, nsteps=3000, 
@@ -240,8 +241,8 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     fig,ax = plt.subplots(figsize=(8,8))
 
     ax.scatter(data[data.mjd_0 <= cutoff].mjd_0, 
-    data[data.mjd_0 <= cutoff].flux,alpha=0.25,color=plotPal[0],label=title)
-    ## Add error bars to plot 
+    data[data.mjd_0 <= cutoff].flux, alpha=0.25, color=plotPal[0], label=title)
+    ## Add error bars to plot (requires changing it to ax.errorbars) 
 
     tRange = np.linspace(0,cutoff,cutoff*48)
     dummyPD = pd.DataFrame()
