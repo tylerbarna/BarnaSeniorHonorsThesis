@@ -69,8 +69,10 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
                                             (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
-                           +thetaDict['y0'])
-                          for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data)
+                           +thetaDict['y0']) +
+                          (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
+                          for t in data['mjd_0']]) 
+        ## make so gaussian is only added after t0
     
     else:
         raise KeyError('Must Provide Valid Model')
@@ -78,11 +80,13 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
 
 def gaussian(theta, thetaKeys,data): 
     thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta,thetaKeys)
-    curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
-    curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
-    curve = thetaDict['gFactor']*curveFrac * np.exp(curveExp)
-    ##taking log means the gaussian will never be inverted
-    ## currently not working as I thought, might be misunderstanding
+    #curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
+    #curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
+    #curve = thetaDict['gFactor']* np.exp(curveExp)
+    curve = np.array([ 0 if t <= thetaDict['t0'] else
+                      (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
+                      for t in data['mjd_0']
+                    ])
     return curve 
 
 def log_prior(theta, thetaKeys):
@@ -112,8 +116,8 @@ def log_prior(theta, thetaKeys):
     if thetaDict['a'] <= 0:
         return -np.inf
     
-    elif thetaDict['a'] > 10:
-        return -np.inf
+#     elif thetaDict['a'] > 10:
+#         return -np.inf
     ## don't seem to be needed
 #     if thetaDict['y0'] > .5:
 #         return -np.inf
@@ -124,28 +128,28 @@ def log_prior(theta, thetaKeys):
 #     if (thetaDict['mean']-2*thetaDict['std']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
 #         return -np.inf
 
-    if thetaDict['mean'] < thetaDict['t0']:
+    if thetaDict['mean']-thetaDict['std'] < thetaDict['t0']:
         return -np.inf
     
-#     elif thetaDict['mean'] > thetaDict['t0']+5:
-#         return -np.inf
+    elif thetaDict['mean'] > thetaDict['t0']+5:
+        return -np.inf
     
 #     elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
 #         return -np.inf ##maybe make this a gaussian prior as well
     
-    if thetaDict['std'] < 0:
+    if thetaDict['std'] < 1:
         return -np.inf
     
-    elif thetaDict['std'] > 14:
+    elif thetaDict['std'] > 4:
         return -np.inf
     
-    else:
-        widthSTD = 1#
-        widthMean = 6 ##pick good parameters later
-        ## Ideally, I should pull this out and make a generalized gaussian prior function
-        ## for use in other priors 
-        #arbitraryTestScale * 0.5 * (np.log(2 * np.pi * widthSTD) ## unneeded
-        logpr += -0.5*((widthMean - thetaDict['std']) / widthSTD)**2
+#     else:
+#         widthSTD = 1#
+#         widthMean = 6 ##pick good parameters later
+#         ## Ideally, I should pull this out and make a generalized gaussian prior function
+#         ## for use in other priors 
+#         #arbitraryTestScale * 0.5 * (np.log(2 * np.pi * widthSTD) ## unneeded
+#         logpr += -0.5*((widthMean - thetaDict['std']) / widthSTD)**2
     
     if thetaDict['gFactor'] < 0: 
         return -np.inf
@@ -153,7 +157,7 @@ def log_prior(theta, thetaKeys):
 #     if thetaDict['gFactor'] > fluxNorm: ##partially justified by Kasen Paper(?)
 #         return -np.inf
     
-    if thetaDict['power'] <= 0: ##setting to 1 significantly increases run time
+    if thetaDict['power'] <= 0: 
         return -np.inf
     
     if thetaDict['power'] >= 2.5:
