@@ -15,7 +15,18 @@ fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
 # tess_2020bpi_a['mjd_0'] = tess_2020bpi_a['mjd'] - tess_2020bpi['mjd'].min()
 # tess_2020bpi_a_norm = tess_2020bpi_a
 # tess_2020bpi_a_norm.flux = tess_2020bpi_a.flux/fluxNorm
-# tess_2020bpi_a_norm.e_flux = tess_2020bpi_a.e_flux/fluxNorm
+# tess_2020bpi_a_norm.e_flux = tess_2020bpi_a.e_flux/fluxNorm'
+
+def normLC(lcDF,fluxNorm=fluxNorm):
+    ## normalizes lc to arbitrary value or default of
+    ## 40% of original lightcurve
+    normFrame = lcDF.copy()
+    normFrame['mjd_0'] = normFrame['mjd'] - tess_2020bpi['mjd'].min()
+    normFrame['flux'] = lcDF['flux']/fluxNorm
+    normFrame['e_flux'] = lcDF['e_flux']/fluxNorm
+    normFrame['raw_flux'] = lcDF['raw_flux']/fluxNorm
+    normFrame['e_raw_flux'] = lcDF['e_raw_flux']/fluxNorm
+    return normFrame
 
 def get_fullparam(theta, thetaKeys):
     params = {'t0':7, 
@@ -33,61 +44,66 @@ def lc_model(theta,thetaKeys, data, curveModel='standard'):
     thetaDict = get_fullparam(theta,thetaKeys)
     
     if curveModel =='standard':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
                  thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power'] 
-                 for t in data['mjd_0']])
+                 for t in data['mjd_0'].to_numpy()])
+    if curveModel =='standardPlus':
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
+        model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
+                 thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power'] + thetaDict['y0']
+                 for t in data['mjd_0'].to_numpy()])
         
     elif curveModel =='powerFix1':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
                  thetaDict['a']**thetaDict['power']  * (t - thetaDict['t0'])**thetaDict['power'] 
-                 for t in data['mjd_0']])
+                 for t in data['mjd_0'].to_numpy()])
         
     elif curveModel =='powerFix2':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
                  thetaDict['a']**(1/thetaDict['power'])  * (t - thetaDict['t0'])**thetaDict['power'] 
-                 for t in data['mjd_0']])
+                 for t in data['mjd_0'].to_numpy()])
         
     elif curveModel =='gaussian':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([0 if t <= thetaDict['t0'] else
-                 (thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power'])
-                 for t in data['mjd_0']]) + gaussian(theta,thetaKeys,data)
+                 (thetaDict['a'] * (t - thetaDict['t0'])**thetaDict['power']) +                 
+                 (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
+                 for t in data['mjd_0'].to_numpy()]) 
         
     elif curveModel =='decoupled':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
-                                            (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
+                                            (np.max(data['mjd_0'].to_numpy())-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
-                          for t in data['mjd_0']])
+                          for t in data['mjd_0'].to_numpy()])
         
     elif curveModel =='dcGauss':
-        var = (data['e_flux']**2 + thetaDict['sigma']**2)
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
-                                            (np.max(data['mjd_0'])-thetaDict['t0']))**thetaDict['power']) 
+                                            (np.max(data['mjd_0'].to_numpy())-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0']) +
                           (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
-                          for t in data['mjd_0']]) 
-        ## make so gaussian is only added after t0
+                          for t in data['mjd_0'].to_numpy()]) 
     
     else:
         raise KeyError('Must Provide Valid Model')
     return model, var
 
-def gaussian(theta, thetaKeys,data): 
-    thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta,thetaKeys)
-    #curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
-    #curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
-    #curve = thetaDict['gFactor']* np.exp(curveExp)
-    curve = np.array([ 0 if t <= thetaDict['t0'] else
-                      (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
-                      for t in data['mjd_0']
-                    ])
-    return curve 
+# def gaussian(theta, thetaKeys,data): 
+#     thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta,thetaKeys)
+#     #curveFrac = (1/(thetaDict['std']*np.sqrt(2*np.pi)))
+#     #curveExp = -0.5*((data['mjd_0']-thetaDict['mean'])/thetaDict['std'])**2
+#     #curve = thetaDict['gFactor']* np.exp(curveExp)
+#     curve = np.array([ 0 if t <= thetaDict['t0'] else
+#                       (thetaDict['gFactor']* np.exp(-0.5*((t-thetaDict['mean'])/thetaDict['std'])**2))
+#                       for t in data['mjd_0']
+#                     ])
+#     return curve 
 
 def log_prior(theta, thetaKeys):
     
@@ -113,11 +129,11 @@ def log_prior(theta, thetaKeys):
     if thetaDict['t0'] > 16:
         return -np.inf
     
-    if thetaDict['a'] <= 0:
+    if thetaDict['a'] <= 0.01:
         return -np.inf
     
-#     elif thetaDict['a'] > 10:
-#         return -np.inf
+    elif thetaDict['a'] > 10:
+        return -np.inf
     ## don't seem to be needed
 #     if thetaDict['y0'] > .5:
 #         return -np.inf
@@ -128,10 +144,10 @@ def log_prior(theta, thetaKeys):
 #     if (thetaDict['mean']-2*thetaDict['std']*np.sqrt(2*np.log(2))) <= thetaDict['t0']:
 #         return -np.inf
 
-    if thetaDict['mean']-thetaDict['std'] < thetaDict['t0']:
+    if thetaDict['mean'] < thetaDict['t0']:
         return -np.inf
     
-    elif thetaDict['mean'] > thetaDict['t0']+5:
+    if thetaDict['mean'] > thetaDict['t0']+10:
         return -np.inf
     
 #     elif (thetaDict['mean']-2*thetaDict['sigma']*np.sqrt(2*np.log(2))) > thetaDict['t0'] + 4:
@@ -154,13 +170,13 @@ def log_prior(theta, thetaKeys):
     if thetaDict['gFactor'] < 0: 
         return -np.inf
     
-#     if thetaDict['gFactor'] > fluxNorm: ##partially justified by Kasen Paper(?)
-#         return -np.inf
-    
-    if thetaDict['power'] <= 0: 
+    if thetaDict['gFactor'] > 1: 
         return -np.inf
     
-    if thetaDict['power'] >= 2.5:
+    if thetaDict['power'] <= 1: 
+        return -np.inf
+    
+    if thetaDict['power'] >= 3:
         return -np.inf
     return logpr
 
@@ -170,7 +186,7 @@ def log_likelihood(theta, thetaKeys, data, curveModel='standard'):
     #print(thetaDict)
     model,var = lc_model(theta,thetaKeys,data, curveModel)
     logl = -0.5 * (np.sum(np.log(2 * np.pi * var) + 
-                            ((data.flux - model)**2 / var) ))
+                            ((data['flux'].to_numpy() - model)**2 / var) ))
         
     return logl
 
@@ -187,7 +203,7 @@ def log_posterior(theta, thetaKeys, data, curveModel='standard',debug=False):
 def doMCMC(data, guess, scale, 
            nwalkers=100, nburn=1500, nsteps=3000, 
            curveModel='standard',debug=False,
-           savePlots=True):
+           dataType='TESS',savePlots=None,fileNameExtras='',plotExt='.png'):
     '''
     Takes data which contains mjd and flux data
     and performs an mcmc fit on it
@@ -211,33 +227,38 @@ def doMCMC(data, guess, scale,
     tlabels = list(guess.keys())
     figcorner = corner.corner(samples, labels=tlabels[0:ndim],
                     show_titles=True, title_fmt=".6f", verbose=True,
-                    title_kwargs={"fontsize": 11}, label_kwargs={"fontsize": 14})
+                    title_kwargs={"fontsize": 10}, label_kwargs={"fontsize": 12})
+    if savePlots:
+        dirString = np.str('./plots/'+np.str(dataType)+'/corner/')
+        mkdir(dirString)
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'-'+fileNameExtras+plotExt)
+        figcorner.savefig(dirString+fileName)
+        
     ## add functionality for saving corner plot here
 
     return samples
 
-def hammerTime(data, guess, scale, cutoff=16.75, 
+def hammerTime(data, guess, scale, cutoff=27, 
                     nwalkers=100, nburn=1500, nsteps=3000,
                     curveModel='standard',numModels=None,
                    MC=True, debug=False,
-               plotPal=('#003C86','#7CFFFA','#008169'),savePlots=False):
+               plotPal=('#003C86','#7CFFFA','#008169'),
+               dataType='TESS',savePlots=None,fileNameExtras='',plotExt='.png'):
     ## pretty sloppy implementation, could make this a part of the function directly
     ## assert nwalkers must be twice number of parameters and fix if not
     
     ##Fix this causing dependency on data being included in file 
     if debug:
         print('Debug Mode is active; log_likelihood will always return 0')
-    if data.mjd_0[0] <=3:##== tess_2020bpi.mjd_0[0] or data.mjd_0[0] == tess_2020bpi_a.mjd_0[0]:
-        title = 'TESS'
-    elif data.mjd_0[0] > 3 and data.mjd_0[0] < 10: ##== ztf_2020bpi.mjd_0[0]:
-        title = 'ZTF'
-    else:
-        raise ValueError('Must Provide data for TESS or ZTF')
-    if savePlots:
-        RootDirString = np.str('./plots/'+title+'/')
-        mkdir(dirString)
+#     if data.mjd_0.min() <=3:##== tess_2020bpi.mjd_0[0] or data.mjd_0[0] == tess_2020bpi_a.mjd_0[0]:
+#         title = 'TESS'
+#     elif data.mjd_0.min() > 3: ##== ztf_2020bpi.mjd_0[0]:
+#         title = 'ZTF'
+#     else:
+#         raise ValueError('Must Provide data for TESS or ZTF')
+
     if MC:    
-        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, nwalkers, nburn, nsteps,curveModel,debug,savePlots)
+        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, nwalkers, nburn, nsteps,curveModel,debug,dataType,savePlots,fileNameExtras,plotExt)
     elif not MC:
         fits = np.array([list(guess.values())])
 
@@ -245,10 +266,10 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     fig,ax = plt.subplots(figsize=(8,8))
 
     ax.scatter(data[data.mjd_0 <= cutoff].mjd_0, 
-    data[data.mjd_0 <= cutoff].flux, alpha=0.25, color=plotPal[0], label=title)
+    data[data.mjd_0 <= cutoff].flux, alpha=0.25, color=plotPal[0], label=dataType)
     ## Add error bars to plot (requires changing it to ax.errorbars) 
 
-    tRange = np.linspace(0,cutoff,cutoff*48)
+    tRange = np.linspace(0,data[data.mjd_0 <= cutoff].mjd_0.max(),data[data.mjd_0 <= cutoff].mjd_0.max()*48)
     dummyPD = pd.DataFrame()
     dummyPD['mjd_0'] = tRange
     dummyPD['e_flux'] = np.zeros(np.size(tRange))
@@ -293,9 +314,11 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     ax2.grid()
     plt.xlabel("mjd-"+str(round(tess_2020bpi.mjd.min())));
     ax.set_ylabel("flux");
-    ax.legend()
-    ax.set_title(title);
-    ## getting weird behavior if a walker goes significantly off the mark in that it will plot the y axis relative to that max rather than fluxNorm
-    ## Update: was an issue with fluxNorm value, not this
-    ## add functionality for saving plot here
+    ax.legend();
+    #ax.set_title(title);
+    if savePlots:
+        dirString = np.str('./plots/'+np.str(dataType)+'/fittedmodel/')
+        mkdir(dirString)
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'-'+fileNameExtras+plotExt)
+        fig.savefig(dirString+fileName)
     return [fits, fits[indices]]
