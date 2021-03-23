@@ -27,7 +27,6 @@ def normLC(lcDF,fluxNorm=fluxNorm):
     normFrame['raw_flux'] = lcDF['raw_flux']/fluxNorm
     normFrame['e_raw_flux'] = lcDF['e_raw_flux']/fluxNorm
     return normFrame
-
 def get_fullparam(theta, thetaKeys):
     params = {'t0':7, 
               'a':1,
@@ -170,13 +169,13 @@ def log_prior(theta, thetaKeys):
     if thetaDict['gFactor'] < 0: 
         return -np.inf
     
-    if thetaDict['gFactor'] > 1: 
+    elif thetaDict['gFactor'] > 1: 
         return -np.inf
     
-    if thetaDict['power'] <= 1: 
+    if thetaDict['power'] <= 0: 
         return -np.inf
     
-    if thetaDict['power'] >= 3:
+    elif thetaDict['power'] >= 3:
         return -np.inf
     return logpr
 
@@ -229,12 +228,11 @@ def doMCMC(data, guess, scale,
                     show_titles=True, title_fmt=".6f", verbose=True,
                     title_kwargs={"fontsize": 10}, label_kwargs={"fontsize": 12})
     if savePlots:
-        dirString = np.str('./plots/'+np.str(dataType)+'/corner/')
+        dirString = np.str('./plots/lcFit/'+np.str(dataType)+'/corner/')
         mkdir(dirString)
-        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'-'+fileNameExtras+plotExt)
-        figcorner.savefig(dirString+fileName)
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps))
+        figcorner.savefig(dirString+fileName+plotExt)
         
-    ## add functionality for saving corner plot here
 
     return samples
 
@@ -261,7 +259,8 @@ def hammerTime(data, guess, scale, cutoff=27,
         fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, nwalkers, nburn, nsteps,curveModel,debug,dataType,savePlots,fileNameExtras,plotExt)
     elif not MC:
         fits = np.array([list(guess.values())])
-
+    fitPD = pd.DataFrame(fits)
+    fitPD.columns = guess.keys()
     
     fig,ax = plt.subplots(figsize=(8,8))
 
@@ -307,6 +306,9 @@ def hammerTime(data, guess, scale, cutoff=27,
     model, var = lc_model(theta,guess.keys(),data[data.mjd_0 <= cutoff],curveModel)
     ax.plot(data[data.mjd_0 <= cutoff].mjd_0,model, linewidth=2,
             label='Median Fit',color=plotPal[2])
+    modelPD = data.copy()
+    modelPD['modelFlux'] = model
+    
     residual = data[data.mjd_0 <= cutoff].flux - model
     #print(model)
     ax2.scatter(data[data.mjd_0 <= cutoff].mjd_0, residual,
@@ -317,8 +319,12 @@ def hammerTime(data, guess, scale, cutoff=27,
     ax.legend();
     #ax.set_title(title);
     if savePlots:
-        dirString = np.str('./plots/'+np.str(dataType)+'/fittedmodel/')
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps))
+        dirString = np.str('./plots/lcFit/'+np.str(dataType)+'/fitModel/')
         mkdir(dirString)
-        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'-'+fileNameExtras+plotExt)
-        fig.savefig(dirString+fileName)
-    return [fits, fits[indices]]
+        fig.savefig(dirString+fileName+plotExt)
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'.csv')
+        modelPD.to_csv(dirString+fileName,index=False)
+        fileName = np.str('params-mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'.csv')
+        fitPD.to_csv(dirString+fileName,index=False)
+    return fitPD, modelPD
