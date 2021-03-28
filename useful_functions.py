@@ -17,6 +17,7 @@ import random
 import scipy as sp
 import sncosmo
 import time
+import timeit
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -31,6 +32,8 @@ from astropy.visualization import quantity_support
 quantity_support()
 
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+from progressbar import progressbar
 
 from scipy import linalg as la
 from scipy import optimize
