@@ -143,3 +143,28 @@ def lcImport(directory, head=None):
     snPandas = snPandas.reset_index(drop=True) ## Resets index to be standard
     
     return snPandas
+
+def interp_mjd(data,argData,data_index='time',arg_index='time'):
+    ## More generalized version of interpToMatch(). Takes an argument for a reference
+    ## DataFrame and a variable number of DataFrames to be interpolated so that
+    ## they match the time sampling of the reference DataFrame. Like interpToMatch(),
+    ## DataFrames must have a 'time' column of an integer or float type.
+    ## Function returns an array containing the reference DataFrame as the first
+    ## item followed by the interpolated DataFrames in the order in which they were
+    ## passed to the function
+    interpArray = []
+    interpArray.append(data)
+    
+    data_indexed = data.set_index(str(data_index))
+    data_length = len(data_indexed.index)
+    minun = data_indexed.index.min()
+    plusle = data_indexed.index.max()
+    newIndex = data_indexed.index
+    
+    arg_indexed = argData.set_index(str(arg_index))
+    arg_interp = pd.DataFrame(index=newIndex)
+    arg_interp.index.name = arg_indexed.index.name
+    for colname, col in arg_indexed.iteritems():
+        arg_interp[colname] = np.interp(newIndex,arg_indexed.index,col)
+    arg_interp.reset_index(inplace=True)
+    return arg_interp

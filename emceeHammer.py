@@ -6,7 +6,9 @@ from multiprocessing import Pool
 ##Need to figure out why this stuff is needed
 tess_2020bpi = pd.read_csv('JhaData/TESS_SN2020bpi.csv')[::2]
 tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
-fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
+ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
+ztf_2020bpi['mjd_0'] = ztf_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
+# fluxNorm = 0.4*np.max(ztf_2020bpi['flux'])
 # fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
 # tess_2020bpi_norm = tess_2020bpi
 # tess_2020bpi_norm.flux = tess_2020bpi.flux/fluxNorm
@@ -17,18 +19,22 @@ fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
 # tess_2020bpi_a_norm.flux = tess_2020bpi_a.flux/fluxNorm
 # tess_2020bpi_a_norm.e_flux = tess_2020bpi_a.e_flux/fluxNorm'
 
-def normLC(lcDF,fluxNorm=fluxNorm):
+def normLC(lcDF):
     ## normalizes lc to arbitrary value or default of
     ## 40% of original lightcurve
     normFrame = lcDF.copy()
     normFrame['mjd_0'] = normFrame['mjd'] - tess_2020bpi['mjd'].min()
+    ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
+    fluxNorm = 0.4*np.max( ztf_2020bpi['flux'])
     normFrame['flux'] = lcDF['flux']/fluxNorm
     normFrame['e_flux'] = lcDF['e_flux']/fluxNorm
     if 'raw_flux' in normFrame.columns:
         normFrame['raw_flux'] = lcDF['raw_flux']/fluxNorm
         normFrame['e_raw_flux'] = lcDF['e_raw_flux']/fluxNorm
-#     if 'e_flux_tuple' in normFrame.columns:
-#         normFrame['e_flux_tuple'] = lcDF['e_flux_tuple']/fluxNorm
+#     if 'e_flux_tuple' in normFrame.columns: ##need to get working
+#         normFrame['e_flux_tuple'] = [np.array(np.abs(lcDF['e_flux_tuple'].to_numpy()[ind][0])/fluxNorm,
+#                                               np.abs(lcDF['e_flux_tuple'].to_numpy()[ind][1])/fluxNorm)
+#                                      for ind in range(len(lcDF['e_flux_tuple']))]
     return normFrame
 def get_fullparam(theta, thetaKeys):
     params = {'t0':7, 
@@ -39,7 +45,10 @@ def get_fullparam(theta, thetaKeys):
               'mean':10.65,
               'std':1,
               'gFactor':0.0,
-              'bkg mod':0}
+              'bkg mod':0,
+              'flux scale':1,
+              'flux shift':0,
+              'cutoffParam':16.75}
     params.update(dict(zip(thetaKeys,theta)))
     return params
 
@@ -83,6 +92,13 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                                             (cutoff-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
+    elif curveModel =='dcCutoff':
+        var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
+        model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
+                          ((thetaDict['a']*((t - thetaDict['t0'])/
+                                            (thetaDict['cutoffParam']-thetaDict['t0']))**thetaDict['power']) 
+                           +thetaDict['y0'])
+                          for t in data[data.mjd_0 < thetaDict['cutoffParam']]['mjd_0'].to_numpy()])
     elif curveModel =='dcRaw':
         var = (data['e_raw_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
@@ -90,7 +106,14 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                                             (cutoff-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
-        
+    elif curveModel =='dcForAll': ##not functional
+        var = ((thetaDict['flux scale']*data['e_raw_flux'].to_numpy())**2 + ztfData['e_flux'].to_numpy()**2+thetaDict['sigma']**2) ## is ztf error needed?
+        model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
+                          ((thetaDict['a']*((t - thetaDict['t0'])/
+                                            (cutoff-thetaDict['t0']))**thetaDict['power']) 
+                           +thetaDict['y0'])
+                          for t in data['mjd_0'].to_numpy()])
+
     elif curveModel =='dcGauss':
         var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
@@ -114,6 +137,8 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
 #                       for t in data['mjd_0']
 #                     ])
 #     return curve 
+
+    
 
 def log_prior(theta, thetaKeys):
     
@@ -139,7 +164,7 @@ def log_prior(theta, thetaKeys):
     elif thetaDict['t0'] > 16:
         return -np.inf
     
-    elif thetaDict['t0'] >9: ##more just for ztf so it doesn't look so odd
+    elif thetaDict['t0'] >11: ##more just for ztf so it doesn't look so odd
         logpr += -(thetaDict['t0'])**(1/4)
     
     if thetaDict['a'] <= 0.01:
@@ -183,6 +208,9 @@ def log_prior(theta, thetaKeys):
     if thetaDict['gFactor'] < 0: 
         return -np.inf
     
+    if thetaDict['cutoffParam'] < 10:
+        return -np.inf
+    
     elif thetaDict['gFactor'] > 1: 
         return -np.inf
     
@@ -191,36 +219,46 @@ def log_prior(theta, thetaKeys):
     
     elif thetaDict['power'] >= 5:
         return -np.inf
+    if thetaDict['flux scale'] < 0:
+        return -np.inf
     return logpr
 
-def log_likelihood(theta, thetaKeys, data, curveModel,cutoff=16.75):
+def log_likelihood(theta, thetaKeys, data, curveModel,cutoff=16.75,ztfData=None):
     #return 0
-    #thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta, thetaKeys)
+    thetaDict = get_fullparam(theta, thetaKeys)
     #print(thetaDict)
-    model,var = lc_model(theta,thetaKeys,data, curveModel=curveModel,cutoff=cutoff)
+    model,var = lc_model(theta,thetaKeys,data[data.mjd_0 < cutoff],ztfData=ztfData, curveModel=curveModel,cutoff=cutoff)
     if curveModel == 'dcRaw':
         flux = data['raw_flux'].to_numpy()
+    elif curveModel == 'dcForAll' and ztfData:
+        thetaDict = get_fullparam(theta, thetaKeys)
+        flux = thetaDict['flux scale']* data['raw_flux'].to_numpy() + thetaDict['flux shift']
+    elif curveModel == 'dcCutoff':
+        thetaDict = get_fullparam(theta, thetaKeys)
+        flux = data[data.mjd_0 < thetaDict['cutoffParam']]['flux'].to_numpy()
     else:
         flux = data['flux'].to_numpy()
+               
     logl = -0.5 * (np.sum(np.log(2 * np.pi * var) + 
                             ((flux - model)**2 / var) ))
         
     return logl
 
     
-def log_posterior(theta, thetaKeys, data, curveModel,cutoff=16.75,debug=False):
+def log_posterior(theta, thetaKeys, data, curveModel,cutoff=16.75,debug=False,ztfData=None):
     thetaDict = get_fullparam(theta, thetaKeys)
     logpr = log_prior(thetaDict.values(), thetaDict.keys())
     
     if logpr == -np.inf or debug:
         return logpr
     else:
-        return logpr + log_likelihood(thetaDict.values(), thetaDict.keys(), data, curveModel=curveModel,cutoff=cutoff)
+        return logpr + log_likelihood(thetaDict.values(), thetaDict.keys(), data, curveModel=curveModel,cutoff=cutoff,ztfData=ztfData)
 
-def doMCMC(data, guess, scale, cutoff=16.75,
+def doMCMC(data, guess, scale, cutoff=16.75, ztfData=None,
            nwalkers=100, nburn=1500, nsteps=3000, 
            curveModel='decoupled',debug=False,
-           dataType='TESS',savePlots=None,fileNameExtras='',plotExt='.png'):
+           dataType='TESS',savePlots=None,
+           fileNameExtras='',plotExt='.pdf'):
     '''
     Takes data which contains mjd and flux data
     and performs an mcmc fit on it
@@ -234,7 +272,7 @@ def doMCMC(data, guess, scale, cutoff=16.75,
 #     print(starting_guesses)
     print('sampling...')
     sampler = emcee.EnsembleSampler(nwalkers, ndim, log_posterior, threads=-1, 
-                                    args=[list(guess.keys()),data,curveModel,cutoff,debug])
+                                    args=[list(guess.keys()),data,curveModel,cutoff,debug,ztfData])
     sampler.run_mcmc(starting_guesses, nsteps,progress="notebook")
     print('done')
     
@@ -254,11 +292,11 @@ def doMCMC(data, guess, scale, cutoff=16.75,
 
     return samples
 
-def hammerTime(data, guess, scale, cutoff=16.75, 
+def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
                     nwalkers=100, nburn=1500, nsteps=3000,
                     curveModel='decoupled',numModels=None,
                    MC=True, debug=False,
-               plotPal=('#003C86','#7CFFFA','#008169'),
+               plotPal=('#003C86','#7CFFFA','#008169'), plotPercentiles=False,
                dataType='TESS',savePlots=None,fileNameExtras='',plotExt='.pdf'):
     '''
     Fits model to TESS or ZTF data using emcee.  Plots model on top of data and residuals an
@@ -286,7 +324,9 @@ def hammerTime(data, guess, scale, cutoff=16.75,
 #         raise ValueError('Must Provide data for TESS or ZTF')
 
     if MC:    
-        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, cutoff, nwalkers, nburn, nsteps,curveModel,debug,dataType,savePlots,fileNameExtras,plotExt)
+        fits = doMCMC(data[data.mjd_0 <= cutoff], guess, scale, ztfData=ztfData, cutoff=cutoff, 
+                      nwalkers=nwalkers, nburn=nburn, nsteps=nsteps, curveModel=curveModel, 
+                      debug=debug,dataType=dataType,savePlots=savePlots,fileNameExtras=fileNameExtras,plotExt=plotExt)
     elif not MC:
         fits = np.array([list(guess.values())])
     fitPD = pd.DataFrame(fits)
@@ -297,7 +337,7 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     plt.xlabel("mjd-"+str(round(tess_2020bpi.mjd.min())));
     ax.set_ylabel("Normalized Flux");
     ax.set_xlim(left=0,right=cutoff*1.05)
-    ax.set_ylim(top=data[data.mjd_0 <= cutoff].flux.to_numpy().max()*1.1) ##maybe unneeded
+#     ax.set_ylim(top=data[data.mjd_0 <= cutoff].flux.to_numpy().max()*1.1) ##maybe unneeded
     
     ## Plotting data and setting up to plot random samples
     tRange = np.linspace(0,data.mjd_0.max(),data.mjd_0.max()*48)
@@ -308,32 +348,47 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     
     if dataType == 'ZTF':
         ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
-        data[data.mjd_0 < cutoff].flux, alpha=0.25, color='black',zorder=2, label=dataType)
+        data[data.mjd_0 < cutoff].flux, alpha=0.75, color=plotPal[0],zorder=2, label=dataType)
         plt.xlabel("mjd-"+str(round(tess_2020bpi.mjd.min())));
         dummyPD['flux'] = data['flux']
     elif curveModel == 'dcRaw':
         ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
-        data[data.mjd_0 < cutoff].raw_flux, alpha=0.5, color=plotPal[0], label=dataType)
+        data[data.mjd_0 < cutoff].raw_flux, #yerr=data[data.mjd_0 < cutoff].e_raw_flux, 
+                   alpha=0.5, color=plotPal[0], label=dataType)
         dummyPD['flux'] = data['raw_flux']
     else:
         ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
-        data[data.mjd_0 < cutoff].flux, alpha=0.5, color=plotPal[0], label=dataType)
+        data[data.mjd_0 < cutoff].flux, #yerr=data[data.mjd_0 < cutoff].e_flux, 
+                   alpha=0.5, color=plotPal[0], label=dataType)
         dummyPD['flux'] = data['flux']
-    ## Note: Should add error bars to plot (requires changing it to ax.errorbars)
+    ## Note: Should add error bars to plot (requires changing it to ax.errorbars) (no it doesn't lol)
+    
+#     if ztfData:## need to get working with e_flux_tuple
+# #         offsetArray = ztfData[ztfData.mjd_0 > dummyPD.mjd_0.min()][ztfData.mjd_0 < cutoff].e_flux_tuple.to_numpy() 
+# #         offsets =[np.array(np.abs(offsetArray[ind][0]),
+# #                            np.abs(offsetArray[ind][1])) 
+# #                   for ind in range(len(offsetArray))]
+#         ax.errorbar(ztfData[ztfData.mjd_0 < cutoff].mjd_0,
+#                       ztfData[ztfData.mjd_0 < cutoff].flux,
+#                       yerr=ztfData[ztfData.mjd_0 < cutoff].e_flux,color=plotPal[3],label='ZTF')
     
     ## Plotting random models
     ## Note: assert that numModels must be <= nwalkers*nsteps (not particularly important)
     if not numModels:
-        numModels = round(0.001*nwalkers*nsteps)
+        numModels = round(0.001*nwalkers*(nsteps-nburn))
         
     indices = list(dict.fromkeys([np.random.randint(low=0,high=len(fits[:,0])) ##makes it so you don't overplot any duplicates (mostly for when you're just plotting your guess)
                                   for i in range(0,numModels)]))
     if len(indices) > 1:
         for i in indices:
             model, var = lc_model(fits[i],guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
+            tempDict = get_fullparam(fits[i], guess.keys())
             alfPogForm = 0.6 - 0.1*(numModels/(numModels+250))
             ## above could be bad in the case of a large sample with few models selected
-            ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
+            if curveModel == 'dcCutoff':
+                ax.plot(dummyPD[dummyPD.mjd_0 < tempDict['cutoffParam']].mjd_0,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
+            else:
+                ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
             ## line width not necessarily representative of actual width of 
             ## distribution? Maybe a concern
             if i == indices[-1]:
@@ -346,6 +401,7 @@ def hammerTime(data, guess, scale, cutoff=16.75,
         
     ## Plotting Median Model
     theta = [np.median(fits[:,i]) for i in range(0,np.shape(fits)[1])]
+    thetaDict = get_fullparam(fits[i], guess.keys())
     model, var = lc_model(theta,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
     ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model, linewidth=2,
             label='Median Fit',color=plotPal[2])
@@ -355,13 +411,14 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     modelPD['modelFlux'] = modelDat
     
     ##Plotting 16th and 84th Percentile Models
-    theta16, theta84 = [np.quantile(fits[:,i],0.16) for i in range(0,np.shape(fits)[1])], [np.quantile(fits[:,i],0.84) for i in range(0,np.shape(fits)[1])]
-    model16, var16 = lc_model(theta16,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-    ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model16, linewidth=2,
-            label='16th and 84th Percentile',color=plotPal[2],linestyle='--')
-    model84, var84 = lc_model(theta84,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-    ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model84, linewidth=2,
-            color=plotPal[2],alpha=0.75,linestyle='--')
+    if plotPercentiles:
+        theta16, theta84 = [np.quantile(fits[:,i],0.16) for i in range(0,np.shape(fits)[1])], [np.quantile(fits[:,i],0.84) for i in range(0,np.shape(fits)[1])]
+        model16, var16 = lc_model(theta16,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
+        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model16, linewidth=2,
+                label='16th Percentile',color=plotPal[2],linestyle='--')
+        model84, var84 = lc_model(theta84,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
+        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model84, linewidth=2,
+                label='84th Percentile',color=plotPal[2],alpha=0.75,linestyle='-.')
     
     ##Plotting Residuals
     if curveModel == 'dcRaw':
@@ -380,18 +437,19 @@ def hammerTime(data, guess, scale, cutoff=16.75,
     #ax.set_title(title);
     if savePlots:
         ## Saves fit Plot
-        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps))
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+np.str(fileNameExtras))
         dirString = np.str('./plots/lcFit/'+np.str(dataType)+'/fitModel/')
         mkdir(dirString)
         fig.savefig(dirString+fileName+plotExt)
         ## Saves PD with the model flux included
-        dirString = np.str('./fitPD/')
+        dirString = np.str('./fitPD/'+np.str(dataType)+'/')
         mkdir(dirString)
-        fileName = np.str('mod-'+np.str(curveModel)+'-cutoff-'+np.str(cutoff)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'.csv')
+        fileName = np.str('mod-'+np.str(curveModel)+'-cutoff-'+np.str(cutoff)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+np.str(fileNameExtras)+'.csv')
         modelPD.to_csv(dirString+fileName,index=False)
         ## Saves all the sampled parameters 
-        dirString = np.str('./fitPD/params/')
+        dirString = np.str('./fitPD/'+np.str(dataType)+'/params/')
         mkdir(dirString)
-        fileName = np.str('params-mod-'+np.str(curveModel)+'-cutoff-'+np.str(cutoff)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+'.csv')
+        fileName = np.str('params-mod-'+np.str(curveModel)+'-cutoff-'+np.str(cutoff)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+np.str(fileNameExtras)+'.csv')
         fitPD.to_csv(dirString+fileName,index=False)
+    plt.show()
     return fitPD, modelPD
