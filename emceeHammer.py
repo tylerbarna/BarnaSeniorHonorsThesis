@@ -3,25 +3,18 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import emcee
 import corner
 from multiprocessing import Pool
-##Need to figure out why this stuff is needed
+##Nuisance Stuff
 tess_2020bpi = pd.read_csv('JhaData/TESS_SN2020bpi.csv')[::2]
 tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
 ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
 ztf_2020bpi['mjd_0'] = ztf_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
-# fluxNorm = 0.4*np.max(ztf_2020bpi['flux'])
-# fluxNorm = 0.4*np.max(tess_2020bpi['flux'])
-# tess_2020bpi_norm = tess_2020bpi
-# tess_2020bpi_norm.flux = tess_2020bpi.flux/fluxNorm
-# tess_2020bpi_norm.e_flux = tess_2020bpi.e_flux/fluxNorm
-# tess_2020bpi_a = pd.read_csv('JhaData/TESS_SN2020bpi_updated.csv')[::2]
-# tess_2020bpi_a['mjd_0'] = tess_2020bpi_a['mjd'] - tess_2020bpi['mjd'].min()
-# tess_2020bpi_a_norm = tess_2020bpi_a
-# tess_2020bpi_a_norm.flux = tess_2020bpi_a.flux/fluxNorm
-# tess_2020bpi_a_norm.e_flux = tess_2020bpi_a.e_flux/fluxNorm'
+
 
 def normLC(lcDF):
-    ## normalizes lc to arbitrary value or default of
-    ## 40% of original lightcurve
+    '''
+    normalizes lc to arbitrary value or default of
+    40% of original lightcurve
+    '''
     normFrame = lcDF.copy()
     normFrame['mjd_0'] = normFrame['mjd'] - tess_2020bpi['mjd'].min()
     ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
@@ -92,7 +85,7 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                                             (cutoff-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
-    elif curveModel =='dcCutoff':
+    elif curveModel =='dcCutoff': ## not functional
         var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
@@ -106,6 +99,14 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                                             (cutoff-thetaDict['t0']))**thetaDict['power']) 
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
+    elif curveModel =='dcRaw2020bpi': ## (Mostly) Not Functional
+        var = (data['e_raw_flux'].to_numpy()**2 + thetaDict['sigma']**2)
+        model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
+                          ((thetaDict['a']*((t - thetaDict['t0'])/
+                                            (cutoff-thetaDict['t0']))**thetaDict['power']) 
+                           +thetaDict['y0'])
+                          for t in data['mjd'].to_numpy()])
+        
     elif curveModel =='dcForAll': ##not functional
         var = ((thetaDict['flux scale']*data['e_raw_flux'].to_numpy())**2 + ztfData['e_flux'].to_numpy()**2+thetaDict['sigma']**2) ## is ztf error needed?
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
@@ -161,11 +162,11 @@ def log_prior(theta, thetaKeys):
 #         ## for use in other priors 
 #         logpr += -arbitraryTestScale * 0.5 * (np.log(2 * np.pi * STD) + 
 #                             ((Mean - thetaDict['std'])**2 / STD) )
-    elif thetaDict['t0'] > 16:
-        return -np.inf
+#     elif thetaDict['t0'] > 16:
+#         return -np.inf
     
-    elif thetaDict['t0'] >11: ##more just for ztf so it doesn't look so odd
-        logpr += -(thetaDict['t0'])**(1/4)
+#     elif thetaDict['t0'] >11: ##more just for ztf so it doesn't look so odd
+#         logpr += -(thetaDict['t0'])**(1/4)
     
     if thetaDict['a'] <= 0.01:
         return -np.inf
@@ -334,30 +335,31 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     
     ##Plotting Models
     fig,ax = plt.subplots(figsize=(8,8))
-    plt.xlabel("mjd-"+str(round(tess_2020bpi.mjd.min())));
+    plt.xlabel("Modified Julian Date");
     ax.set_ylabel("Normalized Flux");
-    ax.set_xlim(left=0,right=cutoff*1.05)
+    #ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
 #     ax.set_ylim(top=data[data.mjd_0 <= cutoff].flux.to_numpy().max()*1.1) ##maybe unneeded
     
     ## Plotting data and setting up to plot random samples
     tRange = np.linspace(0,data.mjd_0.max(),data.mjd_0.max()*48)
     dummyPD = pd.DataFrame()
     dummyPD['mjd_0'] = tRange
+    dummyPD['mjd'] = np.linspace(tess_2020bpi['mjd'].min(),(data.mjd.max()),data.mjd_0.max()*48)
     dummyPD['e_flux'] = np.zeros(np.size(tRange))
     dummyPD['e_raw_flux'] = np.zeros(np.size(tRange))
     
     if dataType == 'ZTF':
-        ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
+        ax.scatter(data[data.mjd_0 < cutoff].mjd, 
         data[data.mjd_0 < cutoff].flux, alpha=0.75, color=plotPal[0],zorder=2, label=dataType)
-        plt.xlabel("mjd-"+str(round(tess_2020bpi.mjd.min())));
+        plt.xlabel("Modified Julian Date");
         dummyPD['flux'] = data['flux']
     elif curveModel == 'dcRaw':
-        ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
+        ax.scatter(data[data.mjd_0 < cutoff].mjd, 
         data[data.mjd_0 < cutoff].raw_flux, #yerr=data[data.mjd_0 < cutoff].e_raw_flux, 
                    alpha=0.5, color=plotPal[0], label=dataType)
         dummyPD['flux'] = data['raw_flux']
     else:
-        ax.scatter(data[data.mjd_0 < cutoff].mjd_0, 
+        ax.scatter(data[data.mjd_0 < cutoff].mjd, 
         data[data.mjd_0 < cutoff].flux, #yerr=data[data.mjd_0 < cutoff].e_flux, 
                    alpha=0.5, color=plotPal[0], label=dataType)
         dummyPD['flux'] = data['flux']
@@ -386,9 +388,9 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
             alfPogForm = 0.6 - 0.1*(numModels/(numModels+250))
             ## above could be bad in the case of a large sample with few models selected
             if curveModel == 'dcCutoff':
-                ax.plot(dummyPD[dummyPD.mjd_0 < tempDict['cutoffParam']].mjd_0,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
+                ax.plot(dummyPD[dummyPD.mjd_0 < tempDict['cutoffParam']].mjd,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
             else:
-                ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
+                ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model, alpha=alfPogForm, linewidth=3, color=plotPal[1],zorder=1)
             ## line width not necessarily representative of actual width of 
             ## distribution? Maybe a concern
             if i == indices[-1]:
@@ -403,21 +405,21 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     theta = [np.median(fits[:,i]) for i in range(0,np.shape(fits)[1])]
     thetaDict = get_fullparam(fits[i], guess.keys())
     model, var = lc_model(theta,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-    ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model, linewidth=2,
+    ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model, linewidth=2,
             label='Median Fit',color=plotPal[2])
     modelDat, varDat = lc_model(theta,guess.keys(),data,curveModel=curveModel,cutoff=cutoff)
     ## Making into a PD for future use
     modelPD = data.copy()
     modelPD['modelFlux'] = modelDat
     
-    ##Plotting 16th and 84th Percentile Models
+    ##Plotting 16th and 84th Percentile Models (wrong)
     if plotPercentiles:
         theta16, theta84 = [np.quantile(fits[:,i],0.16) for i in range(0,np.shape(fits)[1])], [np.quantile(fits[:,i],0.84) for i in range(0,np.shape(fits)[1])]
         model16, var16 = lc_model(theta16,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model16, linewidth=2,
+        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model16, linewidth=2,
                 label='16th Percentile',color=plotPal[2],linestyle='--')
         model84, var84 = lc_model(theta84,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd_0,model84, linewidth=2,
+        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model84, linewidth=2,
                 label='84th Percentile',color=plotPal[2],alpha=0.75,linestyle='-.')
     
     ##Plotting Residuals
@@ -428,10 +430,16 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     divider = make_axes_locatable(ax)
     ax2 = divider.append_axes("bottom",size="25%",pad=0.03)
     ax.figure.add_axes(ax2)
-    ax2.scatter(modelPD[modelPD.mjd_0 < cutoff].mjd_0, modelPD[modelPD.mjd_0 < cutoff].modelResidual,
+    ax2.scatter(modelPD[modelPD.mjd_0 < cutoff].mjd, modelPD[modelPD.mjd_0 < cutoff].modelResidual,
              alpha=1, color=plotPal[0],s=3)
     ax2.grid()
-    ax2.set_xlim(left=0,right=cutoff*1.05)
+    if curveModel == 'dcRaw2020bpi':
+        ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+        ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+    else:
+        ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+        ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+    ax2.set_xlabel('Modified Julian Date')
     
     ax.legend();
     #ax.set_title(title);
