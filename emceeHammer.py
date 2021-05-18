@@ -4,21 +4,26 @@ import emcee
 import corner
 from multiprocessing import Pool
 ##Nuisance Stuff
-tess_2020bpi = pd.read_csv('JhaData/TESS_SN2020bpi.csv')[::2]
+tess_2020bpi = pd.read_csv('./JhaData/TESS_SN2020bpi.csv')[::2]
 tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
-ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
+ztf_2020bpi = pd.read_csv('./JhaData/ztf_SN2020bpi.csv')
 ztf_2020bpi['mjd_0'] = ztf_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
 
 
 def normLC(lcDF):
     '''
     normalizes lc to arbitrary value or default of
-    40% of original lightcurve
+    around 40% of original lightcurve sent by Michael.
+    There's a small tweak to it so the TESS lightcurve is roughly ~1
+    at mjd_0=17, but this shouldn't affect the fit other than the 
+    scaling constant very slightly.
+    I don't believe there would be any significant effect if 
+    one were to use a different normalization constant, in this case
+    you would alter the fluxNorm variable and use this function as usual
     '''
     normFrame = lcDF.copy()
     normFrame['mjd_0'] = normFrame['mjd'] - tess_2020bpi['mjd'].min()
-    ztf_2020bpi = pd.read_csv('JhaData/ztf_SN2020bpi.csv')
-    fluxNorm = 0.4*np.max( ztf_2020bpi['flux'])
+    fluxNorm = 1.2*np.max(tess_2020bpi['flux'].rolling(24).median())
     normFrame['flux'] = lcDF['flux']/fluxNorm
     normFrame['e_flux'] = lcDF['e_flux']/fluxNorm
     if 'raw_flux' in normFrame.columns:
@@ -287,7 +292,7 @@ def doMCMC(data, guess, scale, cutoff=16.75, ztfData=None,
     if savePlots:
         dirString = np.str('./plots/lcFit/'+np.str(dataType)+'/corner/')
         mkdir(dirString)
-        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps))
+        fileName = np.str('mod-'+np.str(curveModel)+'-nparam-'+np.str(len(guess)+1)+'-nwalk-'+np.str(nwalkers)+'-nstep-'+np.str(nsteps)+np.str(fileNameExtras))
         figcorner.savefig(dirString+fileName+plotExt)
         
 
@@ -308,7 +313,7 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     
     guess: dictionary with all parameters that one wants to test. Any parameters used in the chosen
     model that aren't included will be held constant. However, adding terms not used in the model will
-    result in unconstrained behavior
+    result in unconstrained behavior and will not plot well
     
     '''
     ## pretty sloppy implementation, could make this a part of the function directly
