@@ -4,7 +4,7 @@ import emcee
 import corner
 from multiprocessing import Pool
 ##Nuisance Stuff
-tess_2020bpi = pd.read_csv('./JhaData/TESS_SN2020bpi.csv')[::2]
+tess_2020bpi = pd.read_csv('./JhaData/TESS_SN2020bpi.csv')[::2] ## old file is doubled sampling
 tess_2020bpi['mjd_0'] = tess_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
 ztf_2020bpi = pd.read_csv('./JhaData/ztf_SN2020bpi.csv')
 ztf_2020bpi['mjd_0'] = ztf_2020bpi['mjd'] - tess_2020bpi['mjd'].min()
@@ -20,6 +20,9 @@ def normLC(lcDF):
     I don't believe there would be any significant effect if 
     one were to use a different normalization constant, in this case
     you would alter the fluxNorm variable and use this function as usual
+    
+    Arguments:
+    - lcDF: pandas DataFrame with the columns I describe in the documentation notebook
     '''
     normFrame = lcDF.copy()
     normFrame['mjd_0'] = normFrame['mjd'] - tess_2020bpi['mjd'].min()
@@ -35,6 +38,19 @@ def normLC(lcDF):
 #                                      for ind in range(len(lcDF['e_flux_tuple']))]
     return normFrame
 def get_fullparam(theta, thetaKeys):
+    '''
+    Function used at various points in other functions so emcee fit can be run while
+    evaluating only the parameters listed in the guess/scale dictionaries and setting the others
+    to predefined constant values. Two arguments are passed to the function because emcee
+    cannot natively pass dictionaries when varying parameters as far as I can tell.
+    Note: the values in the params dictionary are the default values for each parameter;
+    the parameters that are varying will have their values updated when this function is called.
+    If changing these default values, be careful that they don't cause conflicts with priors.
+    
+    Arguments:
+    - theta: an array containing the values of each parameter to be varied by emcee
+    - thetaKeys: the key values for each of these parameters to construct a dictionary
+    '''
     params = {'t0':7, 
               'a':1,
               'sigma':0.0,
@@ -46,11 +62,28 @@ def get_fullparam(theta, thetaKeys):
               'bkg mod':0,
               'flux scale':1,
               'flux shift':0,
-              'cutoffParam':16.75}
+              'cutoffParam':17}
     params.update(dict(zip(thetaKeys,theta)))
     return params
 
-def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16.75):
+def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='dcRaw',cutoff=17):
+    '''
+    A function that includes a number of different models, though the only one particularly
+    relevant to the final analysis is dcRaw. Function evaluates a given model for the 
+    parameters provided and then returns the flux and variance.
+    
+    Arguments:
+    - theta: an array containing the values of each parameter to be varied by emcee
+    - thetaKeys: the key values for each of these parameters to construct a dictionary
+    - data: the lightcurve data that is being fit; assumes the DataFrame is formatted
+    as outlined in the documentation file
+    - ztfData: part of a model that isn't currently functional that attempts to fit the TESS
+    data to the ZTF lightcurve and also model the lightcurve at the same time; can be safely
+    ignored for most models (default: None)
+    - curveModel: string that corresponds to desired model (default: dcRaw)
+    - cutoff: upper limit for the data emcee uses to fit the lightcurve provided as 
+    number of days after the start of TESS Sector 21 (default: 17)
+    '''
     thetaDict = get_fullparam(theta,thetaKeys)
     
     if curveModel =='standard':
@@ -91,6 +124,7 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
     elif curveModel =='dcCutoff': ## not functional
+        print('Warning: Model may not behave as intended')
         var = (data['e_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
@@ -105,6 +139,7 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                            +thetaDict['y0'])
                           for t in data['mjd_0'].to_numpy()])
     elif curveModel =='dcRaw2020bpi': ## (Mostly) Not Functional
+        print('Warning: Model may not behave as intended')
         var = (data['e_raw_flux'].to_numpy()**2 + thetaDict['sigma']**2)
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
@@ -113,6 +148,7 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
                           for t in data['mjd'].to_numpy()])
         
     elif curveModel =='dcForAll': ##not functional
+        print('Warning: Model may not behave as intended')
         var = ((thetaDict['flux scale']*data['e_raw_flux'].to_numpy())**2 + ztfData['e_flux'].to_numpy()**2+thetaDict['sigma']**2) ## is ztf error needed?
         model = np.array([thetaDict['y0'] if t <= thetaDict['t0'] else
                           ((thetaDict['a']*((t - thetaDict['t0'])/
@@ -147,10 +183,18 @@ def lc_model(theta,thetaKeys, data, ztfData=None,curveModel='standard',cutoff=16
     
 
 def log_prior(theta, thetaKeys):
+    '''
+    Checks that none of the parameters violate any prior conditions. If a prior is violated,
+    function returns a value of negative infinity. Soft penalties can also be added that 
+    are dependent on how different the parameter is from the expected value
     
+    Arguments:
+    - theta: an array containing the values of each parameter to be varied by emcee
+    - thetaKeys: the key values for each of these parameters to construct a dictionary
     nparam = len(theta)
     thetaDict = dict(zip(thetaKeys,theta))#get_fullparam(theta, thetaKeys)
-    
+    '''
+    thetaDict = get_fullparam(theta, thetaKeys)
     logpr = 0.
 
     if thetaDict['sigma'] < 0:
@@ -229,17 +273,34 @@ def log_prior(theta, thetaKeys):
         return -np.inf
     return logpr
 
-def log_likelihood(theta, thetaKeys, data, curveModel,cutoff=16.75,ztfData=None):
+def log_likelihood(theta, thetaKeys, data, curveModel,cutoff=17,ztfData=None):
+    '''
+    Calculates the likelihood of the model with the given parameter values. Some complication
+    is added to the function by checking for a few specfic curve models, but this shouldn't
+    affect standard behavior
+    
+     Arguments:
+    - theta: an array containing the values of each parameter to be varied by emcee
+    - thetaKeys: the key values for each of these parameters to construct a dictionary
+    - data: the lightcurve data that is being fit; assumes the DataFrame is formatted
+    as outlined in the documentation file
+    - curveModel: string that corresponds to desired model (default: dcRaw)
+    - cutoff: upper limit for the data emcee uses to fit the lightcurve provided as 
+    number of days after the start of TESS Sector 21 (default: 17)
+    - ztfData: part of a model that isn't currently functional that attempts to fit the TESS
+    data to the ZTF lightcurve and also model the lightcurve at the same time; can be safely
+    ignored for most models (default: None)
+    '''
     #return 0
     thetaDict = get_fullparam(theta, thetaKeys)
     #print(thetaDict)
     model,var = lc_model(theta,thetaKeys,data[data.mjd_0 < cutoff],ztfData=ztfData, curveModel=curveModel,cutoff=cutoff)
     if curveModel == 'dcRaw':
         flux = data['raw_flux'].to_numpy()
-    elif curveModel == 'dcForAll' and ztfData:
+    elif curveModel == 'dcForAll' and ztfData: ## not functional
         thetaDict = get_fullparam(theta, thetaKeys)
         flux = thetaDict['flux scale']* data['raw_flux'].to_numpy() + thetaDict['flux shift']
-    elif curveModel == 'dcCutoff':
+    elif curveModel == 'dcCutoff': ## Not functional
         thetaDict = get_fullparam(theta, thetaKeys)
         flux = data[data.mjd_0 < thetaDict['cutoffParam']]['flux'].to_numpy()
     else:
@@ -251,7 +312,26 @@ def log_likelihood(theta, thetaKeys, data, curveModel,cutoff=16.75,ztfData=None)
     return logl
 
     
-def log_posterior(theta, thetaKeys, data, curveModel,cutoff=16.75,debug=False,ztfData=None):
+def log_posterior(theta, thetaKeys, data, curveModel,cutoff=17,debug=False,ztfData=None):
+    '''
+    Combines the log likelihood and log prior functions; a parameter that violates a 
+    prior will always return the value of log prior (negative infinity)
+    
+    Arguments:
+    - theta: an array containing the values of each parameter to be varied by emcee
+    - thetaKeys: the key values for each of these parameters to construct a dictionary
+    - data: the lightcurve data that is being fit; assumes the DataFrame is formatted
+    as outlined in the documentation file
+    - curveModel: string that corresponds to desired model (default: dcRaw)
+    - cutoff: upper limit for the data emcee uses to fit the lightcurve provided as 
+    number of days after the start of TESS Sector 21 (default: 17)
+    - debug: when set to True, this makes it so the log likelihood is never returned, 
+    only the log prior. This is useful for investigating issues with prior 
+    conditions (default: False)
+    - ztfData: part of a model that isn't currently functional that attempts to fit the TESS
+    data to the ZTF lightcurve and also model the lightcurve at the same time; can be safely
+    ignored for most models (default: None)
+    '''
     thetaDict = get_fullparam(theta, thetaKeys)
     logpr = log_prior(thetaDict.values(), thetaDict.keys())
     
@@ -260,14 +340,47 @@ def log_posterior(theta, thetaKeys, data, curveModel,cutoff=16.75,debug=False,zt
     else:
         return logpr + log_likelihood(thetaDict.values(), thetaDict.keys(), data, curveModel=curveModel,cutoff=cutoff,ztfData=ztfData)
 
-def doMCMC(data, guess, scale, cutoff=16.75, ztfData=None,
-           nwalkers=100, nburn=1500, nsteps=3000, 
-           curveModel='decoupled',debug=False,
+def doMCMC(data, guess, scale, cutoff=17, ztfData=None,
+           nwalkers=100, nburn=1000, nsteps=3000, 
+           curveModel='dcRaw',debug=False,
            dataType='TESS',savePlots=None,
            fileNameExtras='',plotExt='.pdf'):
     '''
-    Takes data which contains mjd and flux data
-    and performs an mcmc fit on it
+    Takes data which contains mjd and flux data and performs an mcmc fit on it;
+    also makes a corner plot of the selected parameters. Some of the starting guesses
+    axis shaping can appear a bit obtuse, but this is so there can be a dynamic 
+    number of parameters. This behaves as intended with the TESS data.
+    
+    Arguments:
+    - data: the lightcurve data that is being fit; assumes the DataFrame is formatted
+    as outlined in the documentation file
+    - guess: a dictionary with the starting guess for the parameters emcee should vary
+    - scale: a dictionary with the scale lengths for the parameters emcee should vary;
+    make sure these agree with the guess argument
+    - cutoff: upper limit for the data emcee uses to fit the lightcurve provided as 
+    number of days after the start of TESS Sector 21 (default: 17)
+    - ztfData: part of a model that isn't currently functional that attempts to fit the TESS
+    data to the ZTF lightcurve and also model the lightcurve at the same time; can be safely
+    ignored for most models (default: None)
+    - nwalkers: number of walkers emcee should use; must be at least double 
+    the number of parameters that are being varied. Increasing the number of walkers 
+    will exonentially increase the runtime. Usually about 100 is enough (default: 100)
+    - nburn: number of random walks emcee should do for the burn-in run; these steps are 
+    discarded and the randomized parameters are then used as the starting values for the 
+    main run (default: 1000)
+    - nsteps: number of total steps to run for the emcee fit; the number of steps in the main
+    run is equal to nsteps minus nburn (default: 3000)
+    - curveModel: string that corresponds to desired model (default: dcRaw)
+    - debug: when set to True, emcee will only consider the prior conditons when 
+    evaluating the quality of a fit. This is useful for investigating issues with prior 
+    conditions (default: False)
+    - dataType: string that mostly exists so the plots can be saved to a folder that
+    matches the data being used and so the plots have accurate labels (default: 'TESS')
+    - savePlots: when set to True, saves the corner plot of the parameters (default: None)
+    - fileNameExtras: string appended to the end of file names so one can manually add 
+    unique names to plots and csv files (default: '')
+    - plotExt: string used to specify the format to use when saving the 
+    corner plot (default: '.pdf')
     '''
     ndim = len(guess)
     assert ndim == len(scale)
@@ -298,22 +411,54 @@ def doMCMC(data, guess, scale, cutoff=16.75, ztfData=None,
 
     return samples
 
-def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
-                    nwalkers=100, nburn=1500, nsteps=3000,
-                    curveModel='decoupled',numModels=None,
+def hammerTime(data, guess, scale, cutoff=17, ztfData=None,
+                    nwalkers=100, nburn=1000, nsteps=3000,
+                    curveModel='dcRaw',numModels=None,
                    MC=True, debug=False,
-               plotPal=('#003C86','#7CFFFA','#008169'), plotPercentiles=False,
+               plotPal=('#003C86','#7CFFFA','#008169'), 
                dataType='TESS',savePlots=None,fileNameExtras='',plotExt='.pdf'):
     '''
     Fits model to TESS or ZTF data using emcee.  Plots model on top of data and residuals an
     optionally saves the plot and fits/parameters.
     
-    data: Pandas dataFrame with 'flux', 'e_flux', and 'mjd_0' columns. Some models
-    require 'raw_flux' and 'e_raw_flux' as well, but most do not.
-    
-    guess: dictionary with all parameters that one wants to test. Any parameters used in the chosen
-    model that aren't included will be held constant. However, adding terms not used in the model will
-    result in unconstrained behavior and will not plot well
+     Arguments:
+    - data: the lightcurve data that is being fit; assumes the DataFrame is formatted
+    as outlined in the documentation file
+    - guess: a dictionary with the starting guess for the parameters emcee should vary
+    - scale: a dictionary with the scale lengths for the parameters emcee should vary;
+    make sure these agree with the guess argument
+    - cutoff: upper limit for the data emcee uses to fit the lightcurve provided as 
+    number of days after the start of TESS Sector 21 (default: 17)
+    - ztfData: part of a model that isn't currently functional that attempts to fit the TESS
+    data to the ZTF lightcurve and also model the lightcurve at the same time; can be safely
+    ignored for most models (default: None)
+    - nwalkers: number of walkers emcee should use; must be at least double 
+    the number of parameters that are being varied. Increasing the number of walkers 
+    will exonentially increase the runtime. Usually about 100 is enough (default: 100)
+    - nburn: number of random walks emcee should do for the burn-in run; these steps are 
+    discarded and the randomized parameters are then used as the starting values for the 
+    main run (default: 1000)
+    - nsteps: number of total steps to run for the emcee fit; the number of steps in the main
+    run is equal to nsteps minus nburn (default: 3000)
+    - curveModel: string that corresponds to desired model (default: dcRaw)
+    - numModels: allows for one to specify the number of random models to plot. If set to None,
+    plot will randomly select .1% of the parameter combinations found by emcee (default: None)
+    - MC: pseudo-debug flag that will only run the emcee fit if set to True. When set to False,
+    the guess argument is taken as the best fit (default: True)
+    - debug: when set to True, emcee will only consider the prior conditons when 
+    evaluating the quality of a fit. This is useful for investigating issues with prior 
+    conditions (default: False)
+    - plotPal: color palette for plot in the form of a list. The first value is the color of
+    the data points and residuals, the second is the color of the random fits, and the third
+    is the color of the median fit (default: ('#003C86','#7CFFFA','#008169'))
+    - dataType: string that mostly exists so the plots and csv files can be saved 
+    to a folder that matches the data being used and so the plots have 
+    accurate labels (default: 'TESS')
+    - savePlots: when set to True, saves the plots as well as the csv files (default: None)
+    - fileNameExtras: string appended to the end of file names so one can manually add 
+    unique names to plots and csv files (default: '')
+    - plotExt: string used to specify the format to use when saving the 
+    corner plot (default: '.pdf')
     
     '''
     ## pretty sloppy implementation, could make this a part of the function directly
@@ -381,7 +526,7 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     
     ## Plotting random models
     ## Note: assert that numModels must be <= nwalkers*nsteps (not particularly important)
-    if not numModels:
+    if not numModels: ## can change this to change number of models to plot
         numModels = round(0.001*nwalkers*(nsteps-nburn))
         
     indices = list(dict.fromkeys([np.random.randint(low=0,high=len(fits[:,0])) ##makes it so you don't overplot any duplicates (mostly for when you're just plotting your guess)
@@ -417,15 +562,6 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     modelPD = data.copy()
     modelPD['modelFlux'] = modelDat
     
-    ##Plotting 16th and 84th Percentile Models (wrong)
-    if plotPercentiles:
-        theta16, theta84 = [np.quantile(fits[:,i],0.16) for i in range(0,np.shape(fits)[1])], [np.quantile(fits[:,i],0.84) for i in range(0,np.shape(fits)[1])]
-        model16, var16 = lc_model(theta16,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model16, linewidth=2,
-                label='16th Percentile',color=plotPal[2],linestyle='--')
-        model84, var84 = lc_model(theta84,guess.keys(),dummyPD[dummyPD.mjd_0 < cutoff],curveModel=curveModel,cutoff=cutoff)
-        ax.plot(dummyPD[dummyPD.mjd_0 < cutoff].mjd,model84, linewidth=2,
-                label='84th Percentile',color=plotPal[2],alpha=0.75,linestyle='-.')
     
     ##Plotting Residuals
     if curveModel == 'dcRaw':
@@ -438,14 +574,13 @@ def hammerTime(data, guess, scale, cutoff=16.75, ztfData=None,
     ax2.scatter(modelPD[modelPD.mjd_0 < cutoff].mjd, modelPD[modelPD.mjd_0 < cutoff].modelResidual,
              alpha=1, color=plotPal[0],s=3)
     ax2.grid()
-    if curveModel == 'dcRaw2020bpi':
-        ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
-        ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
-    else:
-        ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
-        ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+#     if curveModel == 'dcRaw2020bpi':
+#         ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+#         ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+#     else:
+    ax.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
+    ax2.set_xlim(left=tess_2020bpi.mjd.min()-(cutoff)*0.05,right=(cutoff)*1.05+tess_2020bpi.mjd.min())
     ax2.set_xlabel('Modified Julian Date')
-    
     ax.legend();
     #ax.set_title(title);
     if savePlots:
